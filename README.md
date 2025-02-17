@@ -130,14 +130,14 @@ CMD ["node", "server.js"]
 | `docker run -d`   | **새 컨테이너를 백그라운드에서 실행**          | **Detached 모드로 실행됨**  |
 | `docker start`    | **중지된 컨테이너를 재시작**               | 기본적으로 **Detached 모드** |
 | `docker start -a` | **중지된 컨테이너를 재시작 (Attached 모드)** | 실행 즉시 컨테이너의 출력 확인 가능  |
-# Docker에서 웹 서버가 아닌 애플리케이션 실행
+# 5. Docker에서 웹 서버가 아닌 애플리케이션 실행
 #### 도커는 웹 서버 전용이 아니다
 - 일반적으로 도커는 **웹 애플리케이션과 웹 서버**를 실행하는 데 자주 사용됨.
 - 하지만 도커는 **웹 서버뿐만 아니라 CLI 기반 애플리케이션**도 실행 가능.
 - 예제: **Python 기반의 랜덤 숫자 생성기**(입력값을 받고 결과를 출력하는 프로그램).
 
 CLI 애플리케이션을 `attached` 모드로 실행하는 것이 포인트!
-# 5. Docker 이미지 상세 정보 조회
+# 6. Docker 이미지 상세 정보 조회
 - docker image inspect는 이미지의 세부 정보를 JSON 형식으로 제공
 - 이미지의 생성 날짜, 기본 실행 명령, 환경 변수, 노출된 포트, 레이어 구조 등을 확인할 수 있음
  - --format 옵션을 사용하면 필요한 정보만 필터링 가능
@@ -153,7 +153,7 @@ CLI 애플리케이션을 `attached` 모드로 실행하는 것이 포인트!
 | 노출된 포트 확인      | `docker image inspect <이미지> --format='{{ .Config.ExposedPorts }}'` |
 | 이미지 환경 변수 확인  | `docker image inspect <이미지> --format='{{ .Config.Env }}'` |
 | 이미지의 모든 레이어 확인 | `docker image inspect <이미지> --format='{{ .RootFS.Layers }}'` |
-# 6. Docker 컨테이너와 이미지의 이름 및 태그 관리
+# 7. Docker 컨테이너와 이미지의 이름 및 태그 관리
 ## 컨테이너 이름 관리
 docker run을 실행하면 컨테이너가 실행될 때 **자동으로 생성된 이름**을 가짐
 
