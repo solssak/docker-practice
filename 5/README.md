@@ -138,6 +138,7 @@ docker run --name goals-frontend --network goals-net -it -p 3000:3000 goals-reac
 | **MongoDB**     | `goals-net` | ❌ (포트 노출 없음) | `goals-backend` 컨테이너가 `mongodb` 컨테이너에 직접 연결 |
 | **백엔드(Node.js)** | `goals-net` | `80:80`        | **MongoDB와 네트워크로 연결, 프론트엔드와는 `localhost`로 통신** |
 | **프론트엔드(React)** | ❌ (브라우저에서 실행) | `3000:3000`    | **브라우저에서 `http://localhost`를 통해 백엔드에 요청** |
+
 ✅ **도커 네트워크(goals-net)를 활용하여 컨테이너끼리 통신하도록 설정**.
 ✅ **MongoDB 컨테이너는 네트워크 내에서 접근할 수 있도록, 백엔드에서 mongodb 컨테이너 이름을 사용**.
 ✅ **프론트엔드는 브라우저에서 실행되므로 http://localhost를 사용하여 백엔드와 통신**.
