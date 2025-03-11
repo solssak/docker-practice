@@ -6,8 +6,6 @@
 5. **데이터 지속성을 위한 볼륨 적용**
 6. **실시간 코드 변경 적용 (Live Reload)**
 
----
-
 ## 1. DB(MongoDB) 도커화
 ### MongoDB 컨테이너 실행
 ```
@@ -19,7 +17,6 @@ docker run --name mongodb --rm -d -p 27017:27017 mongo
 node app.js
 ```
 
----
 
 ## 2. 백엔드(Node.js) 도커화
 ### Dockerfile 작성
@@ -65,8 +62,6 @@ docker build -t goal-node .
 docker run --name goals-backend --rm goal-node
 ```
 
----
-
 ## 3. 프론트엔드(React) 도커화
 ### `frontend/Dockerfile` 작성
 ```dockerfile
@@ -96,7 +91,6 @@ docker run --name goals-frontend --rm -it -p 3000:3000 goals-react
 - -it: React 개발 서버가 종료되지 않도록 **인터랙티브 모드** 실행.
 - -p 3000:3000: 컨테이너 내부 포트를 로컬 호스트의 3000번 포트에 매핑.
 
----
 
 ## 4. 도커 네트워크 및 컨테이너 구성하기
 ### 새로운 네트워크 생성
@@ -181,7 +175,6 @@ docker run --name goals-backend --network goals-net \
   -d goals-node
 ```
 
----
 
 ## 백엔드 컨테이너 로그 유지 및 실시간 코드 업데이트
 🚨 **로그 데이터 유지** (named volume)
@@ -223,7 +216,6 @@ docker run --name goals-backend --network goals-net \
   -d goals-node
 ```
 
----
 
 ## 프론트엔드 컨테이너 개선
 🚨 **실시간 코드 업데이트** (바인드 마운트 적용)
