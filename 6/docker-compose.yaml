@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: "mongo"
+    container_name: mongodb
+    volumes:
+      - data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: max
+      MONGO_INITDB_ROOT_PASSWORD: secret
+
+  backend:
+    build: ./backend
+    container_name: backend
+    ports:
+      - "80:80"
+    volumes:
+      - logs:/app/logs
+      - ./backend:/app
+      - /app/node_modules
+    env_file:
+      - ./env/backend.env
+    depends_on:
+      - mongodb
+
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+    stdin_open: true   # -i 옵션과 동일 (입력 가능)
+    tty: true          # -t 옵션과 동일 (가상 터미널 활성화)
+    depends_on:
+      - backend
+
+volumes:
+  data:
+  logs:
