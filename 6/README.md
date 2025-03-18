@@ -186,6 +186,7 @@ services:
 |docker-compose build|컨테이너 실행 없이, 빌드만 수행|
 |docker-compose down|모든 컨테이너 정리 (볼륨 제외)|
 |docker-compose down -v|모든 컨테이너 & 볼륨까지 삭제|
+
 **컨테이너 이름 직접 설정하는 법**
 ```bash
 services:
