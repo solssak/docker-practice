@@ -93,3 +93,34 @@ docker run -it node npm init    # → `node` CMD 무시하고 `npm init` 실행
 | CMD 영향        | 영향 없음                      | CMD 무시됨                                  |
 | 사용 시점       | 실행 중인 컨테이너 내부        | 컨테이너 시작 시                            |
 | 예시            | `docker exec -it app bash`     | `docker run -it node npm init`   
+
+### `ENTRYPOINT`로 npm 고정 CLI 만들기
+`ENTRYPOINT`를 활용하면, 특정 패키지를 고정할 수 있어, 사용자들이 편리하게 CLI를 사용할 수 있음
+```
+FROM node:14-alpine
+WORKDIR /app
+ENTRYPOINT ["npm"]
+```
+단점: 명령어가 김
+```
+docker run -it -v $(pwd):/app mynpm install express --save
+```
+- 매번 실행할 때마다 -it -v $(pwd):/app을 붙여야 하는 게 번거롭고 김
+- 해결책: docker-compose로 명령을 짧게 추상화할 수 있음
+
+### 유틸리티 컨테이너 + Docker Compose
+**유틸리티 컨테이너**
+- 특정 작업(빌드, 초기화, 마이그레이션 등)을 수행하기 위해 만든 일회성 컨테이너
+- 서버처럼 계속 실행되지 않음
+- CLI 도구처럼 “작업만 하고 끝”나는 구조
+- 보통 docker run으로 직접 실행함
+
+**Docker Compose**
+- 여러 컨테이너의 설정을 코드로 정의하고 자동화할 수 있게 해주는 도구
+- `docker run`에 매번 쓰던 긴 명령어를 추상화해서 간단하게 실행할 수 있음
+- 주로 복수의 서비스(컨테이너)를 관리하는 데 쓰지만,
+단일 유틸리티 컨테이너에도 매우 유용
+
+**정리하면..**
+Docker Compose를 사용해서 유틸리티 컨테이너를 최적화할 수 있다.
+특히, 반복적인 유틸리티 작업을 할 때, Compose를 쓰면 명령이 짧아지고 실수도 줄어들며 협업도 쉬워진다.
