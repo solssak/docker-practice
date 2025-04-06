@@ -214,4 +214,69 @@ sudo usermod -a -G docker ec2-user
 sudo systemctl enable docker // 재접속할 때마다 Docker가 자동 실행 되게 설정
 docker version
 ```
-이후 아래 명령어를 입력하고, 버전 확인이 가능하면 성공이다.
+이후 아래 명령어를 입력하고, 버전 확인이 가능하면 웹에 node.js를 올릴 준비가 되었다.
+
+이제 Docker가 설치된 EC2 인스턴스에 우리가 만든 Node.js Docker 애플리케이션 이미지를 전달해야한다.   
+방법은 크게 2가지가 있다.   
+1. 리모트에서 빌드하는 방식 (불필요하게 
+   - 소스 코드 전체를 EC2로 복사
+   - 거기서 `docker build`로 이미지 생성
+   - `docker run`으로 실행
+     - 불필요하게 복잡하고, 특히 보안, 빌드 환경 문제로 비효율적임
+2. 로컬에서 빌드 -> Docker Hub 푸시 -> EC2에서 pull
+   - 로컬에서 이미지를 빌드하고
+   - Docker Hub에 푸시
+   - EC2에서 `docker pull` 후 `docker run`
+     - 협업이나 CI/CD에도 이상적
+
+2번째 방법으로 차근차근 해보면,
+1. Docker Hub에 저장소 만들고
+2. `dockerignore`파일을 설정해 `node_modules`, `Dockerfile`, `*.pem`파일을 추가해준다.
+3. 이미지 빌드 및 태그 설정
+   ```
+   # 이미지 빌드
+   docker build -t node-dep-example-1 .
+
+   # Docker Hub용 태그 추가 (형식: 사용자명/저장소명)
+   docker tag node-dep-example-1 academind/node-example-1
+   ```
+4. 이미지 푸시
+   ```
+   docker push solssak/node-docker-1
+   ```
+Docker Hub에 푸시가 되었다면 EC2 인스턴스에서 해당 이미지를 실행할 수 있다!
+이후 아래 명령어로 해당 이미지를 실행할 수 있게 된다.
+```
+docker pull solssak/node-example-1
+docker run -d -p 80:80 solssak/node-example-1
+```
+이렇게 하면 전 세게 어디에서나   
+브라우저로 EC2 퍼블릭IP에 접속해 우리의 앱을 확인해볼 수 있다.
+
+**주의할점**
+EC2에서 `pull`명령어를 입력했을 때 아래 에러가 발생할 수 있다.
+> docker: no matching manifest for linux/amd64 in the manifest list entries.
+
+EC2 인스턴스에서 사용하는 CPU 아키텍쳐(amd64(에 맞는 Docker 이미지가 Docker Hub 저장소에 존재하지 않는다는 뜻이다.   
+로컬에서 `docker build`시에 M1같은 ARM 환경에서는 `linux/amd64`아키텍쳐로 이미지가 생성된다.   
+그런데 EC2 인스턴스는 일반적으로 `amd64`기반이다.   
+따라서 Docker Hub에 업로드된 이미지가 `arm64`전용일 경우에 EC2에서 `pull`할 수 없고, 저 오류가 발생한다.   
+
+해결 방법으로는 1. `amd64` 이미지로 재빌드 2. 멀티 아키텍쳐 이미지로 빌드 하는 방법이 있는데,   
+범용성 측면에서 2번이 유리하다고 생각했다.
+```
+docker buildx build --platform linux/amd64,linux/arm64 -t solssak/node-docker-1 . --push
+```
+
+마지막 단계로 인바운드 HTTP를 허용해야한다.
+1. EC2 콘솔 -> 인스턴스 -> 보안 그룹에서
+2. 하단 인바운드 규칙 생성
+   Type: HTTP
+   Port: 80 (자동)
+   Source: Anywhere(IPv4)
+3. 저장
+
+### 정리
+- EC2 인스턴스에는 Node.js, npm 등 아무것도 설치하지 않았다.
+- 오직 `docker`만 설치했다.
+- 그럼에도 불구하고 Node.js 앱이 실행되고, 웹으로도 접속할 수 있다.
