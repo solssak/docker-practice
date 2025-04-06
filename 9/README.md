@@ -218,7 +218,7 @@ docker version
 
 이제 Docker가 설치된 EC2 인스턴스에 우리가 만든 Node.js Docker 애플리케이션 이미지를 전달해야한다.   
 방법은 크게 2가지가 있다.   
-1. 리모트에서 빌드하는 방식 (불필요하게 
+1. 리모트에서 빌드하는 방식
    - 소스 코드 전체를 EC2로 복사
    - 거기서 `docker build`로 이미지 생성
    - `docker run`으로 실행
@@ -244,8 +244,7 @@ docker version
    ```
    docker push solssak/node-docker-1
    ```
-Docker Hub에 푸시가 되었다면 EC2 인스턴스에서 해당 이미지를 실행할 수 있다!
-이후 아래 명령어로 해당 이미지를 실행할 수 있게 된다.
+Docker Hub에 푸시가 되었다면 EC2 인스턴스에서 해당 이미지를 실행할 수 있다.   
 ```
 docker pull solssak/node-example-1
 docker run -d -p 80:80 solssak/node-example-1
@@ -253,11 +252,11 @@ docker run -d -p 80:80 solssak/node-example-1
 이렇게 하면 전 세게 어디에서나   
 브라우저로 EC2 퍼블릭IP에 접속해 우리의 앱을 확인해볼 수 있다.
 
-**주의할점**
+**주의할점**   
 EC2에서 `pull`명령어를 입력했을 때 아래 에러가 발생할 수 있다.
 > docker: no matching manifest for linux/amd64 in the manifest list entries.
 
-EC2 인스턴스에서 사용하는 CPU 아키텍쳐(amd64(에 맞는 Docker 이미지가 Docker Hub 저장소에 존재하지 않는다는 뜻이다.   
+EC2 인스턴스에서 사용하는 CPU 아키텍쳐(`amd64`)에 맞는 Docker 이미지가 Docker Hub 저장소에 존재하지 않는다는 뜻이다.   
 로컬에서 `docker build`시에 M1같은 ARM 환경에서는 `linux/amd64`아키텍쳐로 이미지가 생성된다.   
 그런데 EC2 인스턴스는 일반적으로 `amd64`기반이다.   
 따라서 Docker Hub에 업로드된 이미지가 `arm64`전용일 경우에 EC2에서 `pull`할 수 없고, 저 오류가 발생한다.   
@@ -280,3 +279,25 @@ docker buildx build --platform linux/amd64,linux/arm64 -t solssak/node-docker-1 
 - EC2 인스턴스에는 Node.js, npm 등 아무것도 설치하지 않았다.
 - 오직 `docker`만 설치했다.
 - 그럼에도 불구하고 Node.js 앱이 실행되고, 웹으로도 접속할 수 있다.
+
+### 코드 수정부터 인스턴스 종료까지
+코드 변경 시에는 당연하게도 리모트 서버에 자동으로 반영되지 않는다.
+
+1. 변경된 코드 반영: 새 이미지 빌드 & 푸시
+   ```
+   # 1. 현재 실행 중인 컨테이너 확인
+   sudo docker ps
+
+   # 2. 해당 컨테이너 중지
+   sudo docker stop <container-id>
+    ```
+3. EC2에서 실행 중인 컨테이너를 중지하고 최신 이미지를 가져와(pull) 다시 실행하면 변경사항이 적용된다.
+    ```
+    # 1. 최신 이미지 가져오기
+    sudo docker pull solssak/node-example-1
+
+    # 2. 컨테이너 재실행
+    sudo docker run -d --rm -p 80:80 solssak/node-example-1
+    ```
+=> 서버에 Node.js가 없어도 Docker 덕분에 앱을 실행할 수 있다.   
+다만, 이미지 변경 -> 재배포라는 배포 흐름이 있는데, 자동화할 수는 없을까?
