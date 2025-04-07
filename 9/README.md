@@ -300,3 +300,226 @@ docker buildx build --platform linux/amd64,linux/arm64 -t solssak/node-docker-1 
     ```
 => 서버에 Node.js가 없어도 Docker 덕분에 앱을 실행할 수 있다.   
 다만, 이미지 변경 -> 재배포라는 배포 흐름이 있는데, 자동화할 수는 없을까?
+
+### ✅ 수동 배포 방식의 마무리와 한계
+우리는 Docker로 만든 Node.js 앱을   
+AWS EC2 인스턴스에 배포하는 과정을 겪어봤다.   
+- EC2 인스턴스 생성
+- Docker 설치
+- 이미지 pull& run
+- 웹에서 접속
+이 모든 사이클을 Node.js나 기타 런타임이 없이도
+Docker만으로 앱을 실행할 수 있다는 것을 보여준다.
+-> 이것이 Docker의 가장 큰 장점이다.
+
+하지만 이렇게 직접 구현하는 방식에는 한계가 있을 것이다.
+그래서 필요한 것은 **관리형 서비스**이다.
+- AWS Elastic Beanstalk
+- AWS ECS(Fargate 포함)
+- Vercel, Heroku, Fly.io 등
+이런 서비스들은 **서버 생성, 보안 그룹 생성, OS 업데이트**를 모두 자동으로 관리해준다.
+
+즉, 직접 구현 하는 방식은 학습 측면이나, 세세하게 설정할 수 있다는 점에서 잠점이 있지만,   
+대부분의 경우에는 **자동화되고 관리되는 인프라가 더 안전하고 효율적이라고 할 수 있다.**
+
+여전히 docker와 이미지 기반으로 작업을 진행하는데,   
+`docker run`대신 AWS가 제공하는 도구(UI, CLI, CloudFormation 등)을 사용하는 것 뿐.
+즉, 우리가 직접 컨테이너를 생성하지 않지만, 컨테이너 단위로 앱을 관리하는 개념은 그대로 유지
+
+### ✅ 수동 배포 방식에서 관리형 컨테이너 서비스로 전환하기
+**EC2 없이, 관리형 서비스인 ECS(Fargate 모드)를 활용해   **
+로컬에서 만든 Docker 이미지를 AWS에서 실행해보자.
+
+**ECS 특징**
+- EC2 없음 - 서버 관리 필요 없음
+- Docker 설치 필요 없음 - 자동으로 관리됨
+- 서버리스 컨테이너 필요할 때만 실행됨
+- GUI 기반 설정 - CLI 대비 쉽다는 장점이 있음.
+
+**EC2 설정 흐름 정리**
+1. 컨테이너 정의
+   - 이름 : `your-docker-example`
+   - 이미지: `your-dockerhub-id/solssak-docker-id`
+   - 포트: 80
+     > 이 설정은 `docker run -d -p 80:80 ...`과 같은 역할
+2. 태스크 정의
+   - 역할: 컨테이너 실행에 필요한 설정
+   - 런타임: `Fargate`(서버리스)
+   - CPU/메모리: 기본값 사용
+     > 하나의 태스크에 여러 컨테이너도 가능하지만, 이번엔 단일 컨테이너로 진행
+3. 서비스 정의
+   - 태스크를 지속적으로 실행/유지관리하는 역할
+   - 로드 밸런서는 이번엔 생략
+4. 클러스터 생성
+   - 여러 서비스/태스크를 묶는 논리적 그룹
+   - 자동 생성을 선택
+5. 실행 및 배포
+   - 모든 설정 완료 후 `Create` 클릭
+   - 생성 완료 후 `View Service` -> `Tasks`탭에서 태스크 확인
+   - Task ID 클릭 -> Public IP 확인 가능
+     > 이후 `http://<task-public-ip>`에서 실행 확인
+
+** ✅ AWS ECS에서 Docker 컨테이너 업데이트 하는 방법**
+1. 코드 수정 & 이미지 재빌드
+   ```
+   # 코드 수정 (예: welcome.html에서 '!!' → '!')
+   docker build -t yourname/node-example-1 .
+
+   # 태그 지정 (필요 시)
+   docker tag yourname/node-example-1 yourname/node-example-1
+
+   # Docker Hub에 푸시
+   docker push yourname/node-example-1
+   ```
+2. ECS Task Definition 업데이트
+   - AWS Console -> ECS -> Clusters -> default -> Task Definitions
+   - 기존 태스크 선택 -> `Create new revision` 클릭
+   - 설정은 이전과 동일하게 유지
+   - `Save`
+     > 이렇게 하면 ECS가 새로운 이미지 버전을 가져올 준비가 횜
+4. 서비스에 새로운 Task Revision 반영
+   - ECS 클러스터의 서비스로 이동
+   - `Actoins` -> `Updtae Service`클릭
+   - `Skip to review` -> `Update Service`
+     > 이 단계에서 ECS는 새 Task Revision을 사용하여 컨테이너를 다시 실행하며, 최신 이미지를 pull 함.
+3. 실행 확인
+   - `Tasks` 탭에서 새로운 태스크 상태 확인
+     - `Pending` -> `Running`으로 바뀌면 실행 완료
+   - `Task ID` 클릭 -> `Public IP`확인 -> 브라우저에서 접속
+     > 새 Task마다 새로운 IP가 할당되는 점을 인지
+
+> AWS ECS는 자동 업데이트를 하지 않는다.
+> 명시적으로 새 이미지 사용을 지시해야 안정적인 운영이 가능
+> Public IP는 변하므로, 고정 IP/도메인을 위한 별도 설정이 필요하다.
+
+> 자동 배포가 가능하게끔 하려면 여러 방법이 있다.
+> GitHub Actions + AWS CLI
+> ECR + Code Pipeline
+> Amazon ECS Image Updater(오픈소스 도구)
+
+### ✅ AWS ECS에 다중 컨테이너 애플리케이션 배포 (MongoDB + Node.js API)
+AWS ECS에서는 Docker Network 사용이 불가하다.
+- 로컬에서는 Docker Compose가 내부 네트워크를 구성해 `mongodb`라는 이름으로 접근이 가능던 반면
+- ECS 컨테이너가 서로 다른 머신에 분산될 수 있어 이름 기반 연결이 불가하다
+- 다만 같은 Task Definition에 속한 컨테이너끼리는 localhost로 통신이 가능함.
+
+1. 따라서 코드 변경이 필요.
+```
+// 전
+const mongoUrl = `mongodb://${process.env.MONGODB_USERNAME}:${process.env.MONGODB_PASSWORD}@mongodb:27017/course-goals?authSource=admin`;
+
+// 후
+const mongoUrl = `mongodb://${process.env.MONGODB_USERNAME}:${process.env.MONGODB_PASSWORD}@${process.env.MONGODB_URL}:27017/course-goals?authSource=admin`;
+```
+```
+// 환경변수
+// backend/backend.env(로컬 개발용)
+MONGODB_USERNAME=admin
+MONGODB_PASSWORD=pass123
+MONGODB_URL=mongodb
+
+// AWS ECS Task Definition 실행 시
+MONGODB_USERNAME=admin
+MONGODB_PASSWORD=pass123
+MONGODB_URL=localhost
+```
+위와 같이 env를 분리해서 로컬에서는 그대로 작동하게,   
+ECS에서는 `MONGODB_URL=mongodb://localhost:27017`를 전달하여 처리한다.
+
+2. 이후 백엔드 이미지를 별도로 빌드하고, Docker Hub에 새롭게 푸시한다.
+```
+# 프로젝트 루트 위치에서
+docker build ./backend -t goals-node
+
+# Docker Hub에 public repo 생성 (예: academind/goals-node)
+
+# 로컬 이미지에 태그 지정
+docker tag goals-node academind/goals-node
+
+# 푸시
+docker push academind/goals-node
+```
+
+3. ECS의 기존 리소스를 삭제한다.
+- ECS Console > Clusters > 기존 클러스터 삭제
+- 관련 서비스 -> 삭제
+- 삭제 코드 입력: `delete me`, 대기
+
+이후 새 클러스터, 새 태스크, 새 서비스를 생성해 백엔드 컨테이너를 실행할 수 있다.
+
+1. 클러스터 생성
+   - 유형: "Networking only"
+   - 이름: `goals-app`
+   - VPC: 자동생성(`Create VPC` 체크)
+2. Task Definition 생성
+   - Launch type: Fargate
+   - Task name: `goals`
+   - 역할: `ecsTaskExecutionRole`
+   - 메모리/CPU: 최소사양
+3. 컨테이너 추가 - Backend(`goals-backend`)
+   - 이미지: `your-dockerhub-id/goals-node`
+   - 포트: 80
+   - 명령어: node,app.js -> 개발에서는 `npm start`, 프로덕션에서는 `node`만 사용
+   - 환경 변수: 별도 작성
+4. Dockerfile 및 코드 변경 사항
+   - app.js 내부 MongoDB 주소 변경
+   - `Dockerfile`에 env지정(선택 사항)
+     - 혹은 ECS에서 실행 시 환경 변수 전달로 충분
+5. 마지막으로 도커 이미지 재빌드 & 푸시
+   ```
+   docker build ./backend -t goals-node
+   docker tag goals-node your-dockerhub-id/goals-node
+   docker push your-dockerhub-id/goals-node
+   ```
+
+몽고DB 컨테이너를 추가 등록하자!
+
+1. Task Definition
+   - Container name: mongodb
+   - Image: mongo -> ECS에서는 여기서 지정한 이미지 이름을 Docker Hub에서 자동으로 찾음
+   - 포트: 27017
+   - 환경변수: 별도 작성
+2. Service 생성
+   - Task Definition 기반으로 Fargate 서비스 생성
+   - Task 수: 1
+   - 퍼블릭 IP 자동 할당
+3. 로드 밸런서 설정
+   - Application Load Balancer(ALB) 수동 생성
+   - ECS 서비스 생성 중 ALB와 Target Group 연결
+4. 결과 확인
+   - 실행 중인 태스크의 Public IP 확인
+   - `http://<Public0IP>/goals`접근 -> 빈 배열 반환 -> 배포 성공 확인
+   - Postman으로 API 테스트
+  
+🚨 문제 상황
+- ECS에 다중 컨테이너(Node.js + MongoDB) 앱 배포 완료
+- ALB를 통해 접근 가능한 도메인을 설정했지만,
+- 실제로는 서비스가 계속 중지/재시작, ALB 도메인도 접속 불가
+- 이유는:
+  - ALB의 Health Check 경로 오설정 (/ -> /goals 필요)
+    > Health Check 실패 → ALB가 “이 서비스 죽었음” 판단 → ECS 서비스가 태스크를 재시작함
+  - Security Group 누락 (로드밸런서 -> ECS 서비스 인바운드 허용 필요)
+    > Security Group 문제 → ALB가 ECS에 요청을 보낼 수 없음 → 역시 “죽었다고 판단” → 재시작
+    > AWS의 모든 인바운드/아웃바운드 트래픽은 Security Group 허용 규칙에 제어됨.
+    > ECS Task에 연결된 Security Group에서 ALB로 오는 요청을 허용하지 않으면 요청이 차단되어
+    > 통신 실패 -> Health Check 실패 -> ECS Task 종료/재시작 단계를 거치게 되는 것
+
+해결방법을 정리하면
+
+1. Health Check 경로 수정
+  - EC2 → Target Groups → 해당 그룹 선택
+  - Health checks → Edit
+  - Path를 / → /goals로 변경
+  - 이유: / 경로는 앱에서 존재하지 않으므로 404 반환 → 로드밸런서가 "서비스 비정상" 판단
+2. 보안 그룹 수정
+  - EC2 → Load Balancer 선택 → Security Groups 탭
+  - 기존의 디폴트 보안 그룹 외에, ECS 서비스에 연결된 Security Group도 추가
+  - 결과적으로, 로드밸런서가 ECS 서비스의 포트(80 등)에 정상적으로 접근 가능
+
+위 방법을 거치고 나면, 서비스가 더 이상 중지/재시작 되지 않고 안정적으로 유지된다.
+- ALB의 Health Check가 통과하기 때문에 ECS가 태스크를 계속 유지.
+- ECS 태스크가 재시작되지 않으면, 퍼블릭 IP도 변경되지 않게 되고,   
+  ALB의 DNS name을 고정된 엔드포인트로 사용할 수 있게 된다.   
+  > http://<ALB-DNS-name>/goals 처럼, 고정된 URL로 앱에 접근할 수 있게 되는 것
+- 유의할점은 ALB의 DNS name은 고정되지만, ECS Task의 퍼블릭 IP는 여전히 바뀔 수 있다.   
+  > 따라서 DNS name을 통해 접근해야하며 필요하다면 커스텀 도메인을 연결해서 사용할 것.
