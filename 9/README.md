@@ -327,7 +327,7 @@ Docker만으로 앱을 실행할 수 있다는 것을 보여준다.
 즉, 우리가 직접 컨테이너를 생성하지 않지만, 컨테이너 단위로 앱을 관리하는 개념은 그대로 유지
 
 ### ✅ 수동 배포 방식에서 관리형 컨테이너 서비스로 전환하기
-**EC2 없이, 관리형 서비스인 ECS(Fargate 모드)를 활용해   **
+**EC2 없이, 관리형 서비스인 ECS(Fargate 모드)를 활용해**   
 로컬에서 만든 Docker 이미지를 AWS에서 실행해보자.
 
 **ECS 특징**
@@ -497,12 +497,12 @@ docker push academind/goals-node
 - 실제로는 서비스가 계속 중지/재시작, ALB 도메인도 접속 불가
 - 이유는:
   - ALB의 Health Check 경로 오설정 (/ -> /goals 필요)
-    > Health Check 실패 → ALB가 “이 서비스 죽었음” 판단 → ECS 서비스가 태스크를 재시작함
+    > Health Check 실패 → ALB가 “이 서비스 죽었음” 판단 → ECS 서비스가 태스크를 재시작함   
   - Security Group 누락 (로드밸런서 -> ECS 서비스 인바운드 허용 필요)
-    > Security Group 문제 → ALB가 ECS에 요청을 보낼 수 없음 → 역시 “죽었다고 판단” → 재시작
-    > AWS의 모든 인바운드/아웃바운드 트래픽은 Security Group 허용 규칙에 제어됨.
-    > ECS Task에 연결된 Security Group에서 ALB로 오는 요청을 허용하지 않으면 요청이 차단되어
-    > 통신 실패 -> Health Check 실패 -> ECS Task 종료/재시작 단계를 거치게 되는 것
+    > Security Group 문제 → ALB가 ECS에 요청을 보낼 수 없음 → 역시 “죽었다고 판단” → 재시작   
+    > AWS의 모든 인바운드/아웃바운드 트래픽은 Security Group 허용 규칙에 제어됨.   
+    > ECS Task에 연결된 Security Group에서 ALB로 오는 요청을 허용하지 않으면 요청이 차단되어   
+    > 통신 실패 -> Health Check 실패 -> ECS Task 종료/재시작 단계를 거치게 되는 것   
 
 해결방법을 정리하면
 
@@ -523,3 +523,366 @@ docker push academind/goals-node
   > http://<ALB-DNS-name>/goals 처럼, 고정된 URL로 앱에 접근할 수 있게 되는 것
 - 유의할점은 ALB의 DNS name은 고정되지만, ECS Task의 퍼블릭 IP는 여전히 바뀔 수 있다.   
   > 따라서 DNS name을 통해 접근해야하며 필요하다면 커스텀 도메인을 연결해서 사용할 것.
+  
+### ✅ ECS에서 EFS 볼륨을 활용해서 데이터 유지하기
+현재 배포한 방식으로는 서비스 업데이트(=컨테이너 재시작)시 기존 데이터가 사라진다.   
+MongoDB 컨테이너가 종료되면 내부 데이터가 같이 소멸되기 때문이다.
+
+그래서 MongoDB 데이터가 ECS 서비스 재배포시에도 유지되도록 설정하는 것이 목표
+
+**AWS EFS(Elastic File Sytem)과 마운트 설정**
+1. EFS 파일 시스템 생성
+   - EFS 콘솔 → Create file system
+   - 동일한 VPC 선택 (ECS에서 사용 중인 VPC)
+   - 보안 그룹은 ECS 컨테이너의 SG에서 NFS 포트(2049)를 허용해야 함
+   - 이를 위해 별도 efs-sg를 생성하고, Inbound에 ECS SG 추가
+2. ECS Task Definition 수정
+   - Create new revision → 기존 정의 기반으로 새 개정판 작성
+   - Volumes 섹션에서 EFS 유형의 볼륨 추가 (data 이름 추천)
+   - mongodb 컨테이너의 /data/db에 마운트 (MongoDB의 기본 저장 경로)
+3. 서비스 업데이트
+   - Update Service → Force new deployment
+   - Platform version은 1.4.0 사용 (EFS 지원을 위해)
+
+🚨 주의 사항
+ECS는 롤링 배포 방식을 사용한다. (기존 태스크 유지 + 새 태스크 병행 실행)   
+MongoDB는 동시에 하나의 파일 시스템에만 접근 가능해서   
+동시에 두 MongoDB 컨테이너가 /data/db 접근 시 충돌이 발생한다. (mongod.lock 에러)   
+
+그래서 새 태스크 배포 전, 기존 태스크를 수동으로 중지하여 충돌 방지하는 동작이 필요하다.
+
+**아키텍처 요약**
+1. AWS ECS 사용
+   - Fargate 런타임 기반, EC2 인스턴스 직접 관리 없음
+   - 하나의 Task에 두 개의 컨테이너 포함
+     - `Node.js REST API`
+     - `MongoDB`
+2. 데이터 영속성 보장
+   - MongoDB 컨테이너에 EFS 볼륨 마운트
+   - AWS EFS
+   - 컨테이너 재시작/재배포 시에도 데이터 유지
+     - EFS는 AWS가 관리하는 네트워크 스토리지므로, 컨테이너와 무관하게 유지
+3. 외부 접근
+   - Application Load Balancer (ALB) 사용
+     - 고정된 DNS 이름 제공
+     - 들어오는 요청을 Node.js API 컨테이너로 라우팅
+   **- 유저 -> ALB -> Node.js 컨테이너 -> MongoDB 컨테이너 -> 데이터 처리 및 응답 변환**
+
+아키텍처 시각화
+```
+사용자 요청 (HTTP)
+        │
+        ▼
+Application Load Balancer (고정 DNS)
+        │
+        ▼
+ECS Service (Fargate)
+        │
+        └──────────┬────────────┐
+                   ▼            ▼
+      Node.js Backend     MongoDB (DB 컨테이너)
+             │                     │
+             └──────────┐          │
+                        ▼          ▼
+                  Amazon EFS (Persistent Volume)
+```
+
+### ✅ MongoDB를 ECS에 직접 배포하는 대신 MongoDB Atlas를 사용하기
+MongoDB Atlas를 사용하면 직접 컨테이너나 인스턴스에 MongoDB를 설치할 필요가 없다.
+> MongoDB Atlas는 MongoDB 공식에서 제공하는 클라우드 기반 관리형 데이터베이스 서비스이다.
+- 주요 기능:
+  - 자동 확장, 백업, 복구, 보안 패치 등 관리 자동화
+  - 글로벌 클러스터링 및 고가용성 제공
+  - 쉬운 연결 (MongoDB URI 제공)
+- 사용자는 단순히 애플리케이션에서 연결 URI만 설정하면 됨
+
+즉, **인프라를 직접 제어하고 싶은 경우**에는 ECS + MongoDB 컨테이너   
+빠르게 서비스를 구축하고 싶고, **MongoDB를 깊이 모르거나 운영 리소스가 부족한 경우** MongoDB Atlas
+
+**MongoDB -> MongoDB Atlas 전환 흐름**
+1. MongoDB Altas 클러스터 생성
+   - 사용자, 비밀번호 설정
+   - IP 접근 제어
+3. 환경 변수 수정
+   - `MONGODB_URL` -> Atlas에서 제공하는 연결 URI로 변경
+   - `MONGODB_NAME` 등으로 DB 이름 유연하게 설정
+   - 개발/프로덕션 분기처리는 환경변수로 통제
+5. 개발 환경(docker-compose.yaml)정리
+   - MongoDB 서비스 제거 (이제 Atlas 사용)
+   - 볼륨, depends_on 등 관련 설정 제거
+   - `.env`파일 수정(Atlas 자격 정보 반영)
+7. 연결 오류 발생 시 확인 사항
+   - Atlas의 IP 화이트리스트 설정
+   - 사용자 권한 및 비밀번호 확인
+9. 테스트
+    - `docker-compose up`
+    - `/goals`요청 시 빈 배열 반환 -> DB 연결 성공
+
+**✅ ECS에서 MongoDB Atlas 전환하기**
+
+1. 기존 설정 정리
+   - ECS 태스크 정의에서 `mongodb`컨테이너 제거
+   - 연결되어 있던 `EFS 볼륨`, `보안 그룹`, `파일 시스템` 정리
+2. 환경 변수 구성 변경
+3. Docker 이미지 갱신
+   - 코드에서 Atlas용 환경 변수를 반영했으면, -> 반드시 이미지를 새로 빌드하고 Docker Hub에 푸시
+   - 그렇지 않으면 ECS는 여전히 이전 이미지로 컨테이너 실행
+4. ECS 서비스 업데이트
+   - `Force new deployment`로 새 Task 생성
+   - 이제 MongoDB 컨테이너 없이, 외부 MongoDB Atlas에 연결
+
+**MongoDB -> MongoDB Atlas로 전환 후 얻을 수 있는 장점**
+
+- 데이터 영속성 확보: 컨테이너 재시작해도 데이터 유지
+- 운영 비용/시간 절감: 백업, 보안, 복제 등을 Atlas가 관리
+- 개발 환경과 일치: Atlas를 dev/prod에서 모두 사용 가능
+
+### ✅ 프론트엔드(React SPA)를 추가하여 완전한 다중 컨테이너 애플리케이션 구성
+이전까지 한 일
+- 기존에는 Node.js API + MongoDB 컨테이너 → ECS에 배포
+- 이후 MongoDB 컨테이너를 제거하고 MongoDB Atlas로 전환
+- 현재는 Node.js 백엔드 API 하나만 ECS에서 실행 중
+
+새로운 목표
+- 프론트엔드(React SPA)를 추가하여 완전한 다중 컨테이너 애플리케이션 구성
+
+핵심 흐름
+1. React SPA는 빌드 단계를 필요로 함
+   - 개발 중에는 npm start 또는 vite/webpack dev server로 로컬 개발
+   - 배포 시에는 반드시 npm run build → 정적 파일 생성 필요
+   **이 빌드 결과물을 서빙할 환경(Nginx 등)**이 필요함
+2. SPA는 SSR이 아님 → 정적 파일 서빙이 필요
+   - Node.js API처럼 서버에서 실행되는 게 아님
+   - 단순 정적 파일을 클라이언트로 전달하는 구조
+   따라서 별도의 서버(Nginx) 또는 Node.js Express static 미들웨어 등을 사용하여 서빙해야 함
+
+**✅ 프론트엔드(React) 앱의 "빌드 단계" 필요성과 도커 배포 전략
+React, Vue, Angular 등의 프론트엔드 앱 특징   
+브라우저에서 직접 실행할 수 없는 JSX, TypeScript, 최신 JS 문법 등을 사용   
+
+→ 이 코드들은 브라우저 친화적 코드로 '변환'(컴파일) 되어야 함
+
+**현재 React 프로젝트 구조**
+
+npm start: 개발용. 내부적으로 react-scripts start 실행 → 개발 서버 실행   
+npm run build: 프로덕션용. 내부적으로 react-scripts build 실행 → /build 폴더에 최적화된 정적 자산 생성
+
+**🚨 문제점**
+
+개발용 Dockerfile은 npm start 기반 → 프로덕션에서 쓸 수 없음   
+npm run build는 정적 파일을 내보내기만 하고, 서버는 실행하지 않음   
+
+따라서, 프로덕션에서는:   
+정적 파일을 제공할 웹 서버 (예: Nginx) 가 필요   
+또는 Express 같은 Node 서버를 직접 구성할 수도 있음   
+
+**해결 방향**
+
+새로운 Dockerfile 구성   
+1단계: 빌드 컨테이너에서 npm run build 실행 → /build 정적 자산 생성   
+2단계: Nginx 컨테이너를 이용해 /build 정적 자산을 서빙   
+도커 멀티스테이지 빌드(Multi-stage Build) 활용 (추천)   
+
+**✅ React 앱의 프로덕션 컨테이너 만들기 (빌드 & 멀티 스테이지 빌드)
+
+1. Dockerfile.prod 생성
+   - 기존 개발용 Dockerfile과 구분
+   - npm run build 실행만 포함됨 (정적 파일 생성 목적)
+   - 하지만 이 파일만으로는 작동 안 함 – 서버가 없음
+2. 멀티 스테이지 빌드(Multi-stage Build) 활용
+   1단계: Node 환경에서 npm run build → /build 정적 자산 생성   
+   2단계: Nginx 환경에서 /build 결과물을 /usr/share/nginx/html에 복사   
+   - 최종 이미지는 Nginx 기반의 가볍고 최적화된 정적 웹 서버
+
+**정리하면..**
+
+React 앱은 개발과 프로덕션이 반드시 다르게 실행되어야 함   
+프로덕션에선 npm run build로 생성된 정적 자산 + 이를 서빙할 웹 서버(Nginx 등)가 필요   
+이를 위한 최선의 Docker 전략은 멀티 스테이지 빌드   
+👉 이 구조로 Dockerfile.prod을 완성하고, ECS에 배포할 예정   
+
+**✅ React 애플리케이션을 위한 멀티 스테이지 Dockerfile**
+
+멀티 스테이지 빌드를 활용
+1. build 스테이지 (Node 환경)
+   - Node 이미지에서 npm install, npm run build 실행
+   - /app/build 경로에 최적화된 정적 파일 생성
+   - 목적: 최종 결과물(build 폴더)만 생성
+2. 웹 서버 스테이지 (Nginx 환경)
+   - nginx:stable-alpine 이미지를 사용하여
+   - 위에서 생성한 /app/build → /usr/share/nginx/html 로 복사
+   - 목적: Nginx 서버로 최종 파일을 정적으로 서빙
+
+**멀티 스테이지 빌드로 해결하는 것들**
+1. (문제) 불필요한 파일, 툴, 용량 포함 문제
+   - 일반적으로 빌드에 사용되는 의존성(devDependencies)이나 툴(node, npm, webpack 등)은 실행 시 필요 없음
+   - 하지만 단일 Dockerfile로 빌드하면 최종 이미지에 다 들어감 → 용량 커짐 + 보안 리스크 증가
+2. (해결) 빌드는 첫 번째 스테이지에서만 하고, 최종 결과물만 두 번째 스테이지에 복사
+   → 경량화된 안전한 최종 이미지 생성
+
+1. (문제) 보안 문제
+   - 빌드 도구(Node.js 등)가 남아 있으면 공격 벡터가 늘어남
+   - 애플리케이션 런타임에 필요 없는 패키지가 컨테이너에 존재하게 됨
+2. (해결) 빌드 도구를 아예 포함하지 않음 → 최소한의 실행 환경 구성
+
+1. (장점) 클린 빌드 이미지
+결과물만 있는 상태에서 컨테이너를 실행하므로   
+불필요한 캐시, 소스 코드, 임시 파일이 없다.
+
+이미지 용량 ↓, 보안 ↑, 관리 편의성 ↑
+
+**✅ 멀티 스테이지 빌드 기반의 React 프론트엔드 앱 ECS 배포 준비**
+
+1. React 앱의 빌드 환경 고려
+   - React 앱은 브라우저에서 실행되기 때문에, 내부 HTTP 요청에서 localhost 미사용   
+   - 개발 중엔 localhost가 맞지만, 프로덕션에선 브라우저가 실행되는 사용자의 컴퓨터를 가리킴   
+해결: 요청 URL을 /goals처럼 상대 경로로 변경 → 같은 도메인 내 백엔드 API와 통신 가능   
+상황에 따라 REACT_APP_BACKEND_URL 같은 환경변수 도입 가능 (강의 후반에 나올 예정)
+2. Dockerfile.prod에 멀티 스테이지 빌드 적용
+   - 첫 번째 스테이지: node 기반으로 npm run build 실행
+   - 두 번째 스테이지: nginx 기반으로 빌드된 정적 파일을 /usr/share/nginx/html에 복사 → 웹 서버로 제공
+3. Docker 이미지 빌드 & 푸시
+   ```
+   docker build -f frontend/Dockerfile.prod -t academind/goals-react ./frontend
+   docker push academind/goals-reac
+   ```
+   - 주의: -f 옵션에는 Dockerfile의 전체 경로, 마지막 인자는 컨텍스트 디렉토리 (보통 소스 폴더)
+
+**✅ AWS ECS에 React 프론트엔드 배포 정리**
+1. 두 개의 웹 서버 → 하나의 태스크에 배포 불가
+   - 백엔드(Node)와 프론트엔드(React)는 각자 포트 80을 사용
+   - 하나의 ECS 태스크 내에서는 같은 포트를 두 컨테이너가 공유할 수 없음
+   - 따라서 각각 별도의 태스크로 분리 필요
+2. React 앱에서 API 요청 경로 문제
+   - React 앱은 브라우저에서 실행되므로 localhost는 ECS가 아닌 사용자 PC를 가리킴
+   - 따라서 정적 도메인을 통한 요청 필요
+   - ```
+     const backendUrl = process.env.NODE_ENV === 'development'
+     ? 'http://localhost'
+     : 'http://<BACKEND-LOAD-BALANCER-DNS>';
+
+     fetch(`${backendUrl}/goals`);
+     ```
+3. React 앱에 환경변수 전달은 빌드 시점에만 가능
+   - 브라우저는 Docker 환경변수를 모름
+   - 빌드 시 REACT_APP_ prefix를 붙여 환경 변수 주입
+   - ```
+     REACT_APP_BACKEND_URL=http://my-api.com npm run build
+     ```
+4. 프론트엔드를 위한 로드 밸런서도 별도 생성
+   - 두 개의 ECS 태스크 → 두 개의 ALB 필요
+   - 각각의 ALB는 다른 도메인 (또는 서브도메인)에 바인딩 가능
+5. React 이미지 다시 빌드 & 푸시
+   - API 요청 도메인 변경 → 코드 변경 → 반드시 다시 빌드 & 푸시
+   ```
+   docker build -f frontend/Dockerfile.prod -t academind/goals-react ./frontend
+   docker push academind/goals-react
+   ```
+6. 프론트엔드용 ECS 서비스 구성
+   - 기존과 동일한 방식으로 ECS 서비스 생성
+   - Fargate, ALB, 서브넷, Security Group 설정 동일
+   - 새로 만든 React 태스크 정의 기반
+
+**이렇게 하면..**
+
+React 프론트엔드 + Node 백엔드 각각 독립된 ECS 서비스 & ALB로 배포 완료   
+서로 다른 URL에서 정상 작동 + 연동 성공   
+프론트엔드는 정적 파일, 백엔드는 REST API 제공
+
+**✅ 정리 요약**
+1. 로컬 개발 환경(docker-compose up)도 여전히 잘 작동
+   - React 앱이 localhost:3000에서 정상 구동됨
+   - 개발 DB와 연결되어 있으므로 목표 데이터는 별도로 존
+   - 로컬에서도 도커 기반으로 실행되므로 여전히 일관된 개발 환경을 유지 중
+2. 개발 vs 프로덕션 환경의 차이
+   - Docker가 환경 통일을 돕는 도구라는 점은 여전히 유효
+   - 하지만 프로젝트 성격에 따라 환경별 차이는 불가피:
+       - 예: React는 개발용(start)과 배포용(build) 실행 방식이 다름
+       - MongoDB는 개발용 데이터베이스와 프로덕션용 Atlas를 따로 둬야 안전
+3. 멀티 스테이지 빌드로 빌드 + 실행 환경을 분리
+   - 하나의 Dockerfile에서:
+       - React 소스 빌드 (Node 필요)
+       - 빌드된 파일을 Nginx로 서빙
+   - 이를 통해 하나의 Dockerfile로 운영용 이미지 생성 가능
+   - 따라서 Dockerfile.dev, Dockerfile.prod를 나누지 않아도 됨
+4. "동일한 환경"의 의미
+   - 동일한 환경이라는 건:
+       - 언어, 프레임워크, 실행 방식이 같은 코드베이스에서
+       - 환경변수나 대상 외부 서비스만 다른 상황을 의미
+   - React 앱은 브라우저에서 실행되므로 도커 환경변수는 의미 없음
+   - 대신 빌드시 .env.production 등의 환경 파일을 통해 URL 차이만 조정
+5. 코드가 바뀌어도 도커의 장점은 유효함
+   - Node 버전만 통일하면, Docker로 빌드된 실행 환경은 같음
+   - 도커의 장점:
+       - OS 환경 차이 제거
+       - 실행 방식 및 의존성 고정
+       - CI/CD 용이성 확보
+       - 로컬/서버 재현성 보장
+
+**결론**
+
+>도커를 활용해 React + Node + MongoDB 앱을 로컬과 AWS ECS 양쪽에서 동일하게 실행 가능한 구조로 완성.   
+>프로덕션은 멀티 스테이지 빌드와 Atlas, ECS Fargate 등 클라우드 친화적 스택으로 구성하고,   
+>개발은 docker-compose 기반 빠르고 가벼운 환경으로 유지하며,   
+>전체적으로 확장성과 안정성을 모두 잡는 방향으로 마무리했다.
+
+
+**✅ 멀티 스테이지 빌드 돌아보기**
+- 하나의 Dockerfile에서 여러 단계(build, test, deploy 등)를 정의할 수 있음
+- FROM ... AS build 처럼 각 단계에 이름 지정
+- 최종 단계에서 필요한 결과물만 가져와 가볍고 효율적인 이미지 생성
+
+`--target` 옵션이란?
+> 특정 스테이지만 빌드하고 싶을 때 사용하는 옵션
+```
+docker build -f frontend/Dockerfile.prod --target build -t my-build-image .
+```
+- build라는 스테이지까지만 빌드됨
+- 최종 nginx 실행 환경은 포함되지 않음
+- 결과적으로, 정적 파일만 포함된 이미지가 생성됨 (서버 없음)
+
+용도
+- 테스트 용도: 테스트만 정의된 스테이지를 대상으로 테스트 이미지 빌드할 수 있음
+- 개별 단계 디버깅: 전체 빌드 과정 중 특정 스테이지만 검증 가능
+- CI 파이프라인 최적화: 각 단계별로 캐시 활용, 조건부 실행 가능
+
+>`--target`은 멀티 스테이지 Dockerfile을 유연하게 활용하게 해주는 고급 기능.   
+>하지만 프로덕션에서는 보통 전체 빌드를 하고, `--target`은 개발/CI 목적으로 사용하는 것이 일반적입니다.
+
+### ✅ 최종 정리
+1. 로컬 개발
+   - Dockerfile, docker-compose를 통해 개발 환경 표준화
+   - 바인드 마운트로 라이브 코드 반영 가능
+   - 개발 서버 (예: React npm start)는 프로덕션과 다름
+2. 이미지 빌드 & 컨테이너 실행
+   - 애플리케이션을 이미지로 패키징 → 컨테이너로 실행
+   - 로컬, 원격, 클라우드 어디서든 동일하게 실행 가능
+3. 멀티 스테이지 빌드
+   - React 같은 빌드 과정이 필요한 앱을 위한 도커 최적화
+   - build 단계 → 소스코드 컴파일
+   - serve 단계 → 빌드 결과물만 복사하여 nginx로 서비스
+   - `--target` 옵션으로 특정 스테이지만 선택 빌드 가능
+4. ☁️ AWS ECS 배포
+   - EC2 직접 세팅 vs. ECS(Fargate) 관리형 서비스 사용
+   - 컨테이너를 태스크 정의 → 서비스로 배포
+   - ALB(Application Load Balancer)로 고정된 URL 제공
+   - Health Check 설정, 보안 그룹 설정 중요
+   - EFS 볼륨 연결로 데이터 영속성 확보
+5. 단일 vs. 다중 컨테이너 구성
+   - 하나의 태스크 내 여러 컨테이너 배포 가능 (단, 포트 충돌 주의)
+   - 프론트엔드와 백엔드가 모두 웹서버일 경우 → 태스크 분리 필요
+   - 서로 다른 도메인 / ALB 연결
+6. 관리형 서비스 도입 판단
+   - MongoDB 컨테이너 직접 운영 ❌ (백업/가용성/보안 문제)
+   - → MongoDB Atlas 같은 관리형 DB로 전환 권장
+   - 관리형 서비스는 복잡성 줄이고 운영 안정성 증가
+7. 도커의 진짜 가치
+   - 개발 = 프로덕션과 동일한 환경
+   - 로컬/리모트/클라우드 어디든 동일한 이미지 실행
+   - 단순한 로컬 테스트 도구를 넘어 전체 배포 전략의 핵심
+8. 우리가 얻은 것
+  - Dockerfile, Docker Compose 사용법
+  - 멀티 스테이지 빌드
+  - AWS ECS (Fargate) + ALB를 통한 배포
+  - EFS, MongoDB Atlas 통합
+  - 개발/운영/배포 전체 흐름 경험
