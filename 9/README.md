@@ -881,8 +881,8 @@ docker build -f frontend/Dockerfile.prod --target build -t my-build-image .
    - 로컬/리모트/클라우드 어디든 동일한 이미지 실행
    - 단순한 로컬 테스트 도구를 넘어 전체 배포 전략의 핵심
 8. 우리가 얻은 것
-  - Dockerfile, Docker Compose 사용법
-  - 멀티 스테이지 빌드
-  - AWS ECS (Fargate) + ALB를 통한 배포
-  - EFS, MongoDB Atlas 통합
-  - 개발/운영/배포 전체 흐름 경험
+   - Dockerfile, Docker Compose 사용법
+   - 멀티 스테이지 빌드
+   - AWS ECS (Fargate) + ALB를 통한 배포
+   - EFS, MongoDB Atlas 통합
+   - 개발/운영/배포 전체 흐름 경험
